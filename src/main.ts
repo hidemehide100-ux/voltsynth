@@ -59,11 +59,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <header class="synth-header">
       <aside class="header-panel identity-card" aria-hidden="true">
-        <p class="panel-label">Studio Build</p>
+        <p class="panel-label">Build Notes</p>
         <div class="identity-stack">
-          <span>Poly 17</span>
-          <span>Reactive Scope</span>
-          <span>Nine voice sets</span>
+          <span>17 playable keys</span>
+          <span>9 sound presets</span>
+          <span>ADSR + filter engine</span>
         </div>
       </aside>
 
@@ -71,9 +71,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <p class="eyebrow"><span>Operation VoltAudio</span></p>
         <h1 id="app-title"><span>VoltSynth</span></h1>
         <div class="brand-meta" aria-hidden="true">
-          <span>Studio Edition</span>
-          <span>Web Audio</span>
-          <span>Live Response</span>
+          <span>Browser Synth</span>
+          <span>Web Audio API</span>
+          <span>Manual build</span>
         </div>
       </div>
 
@@ -89,7 +89,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="control-grid">
       <section class="module transport module-live" aria-label="Audio transport">
         <button class="primary" id="start-audio" type="button">Start Audio</button>
-        <button class="secondary" id="play-note" type="button" disabled>Play Test Note</button>
+        <button class="secondary" id="play-note" type="button" disabled>Preview Note</button>
       </section>
 
       <section class="module oscillator" aria-label="Oscillator controls">
