@@ -32,11 +32,31 @@ type PointerSession = {
 const signalBars = Array.from({ length: signalBarCount }, (_, index) => {
   const color = signalColors[index % signalColors.length]
 
-  return `<span style="--i: ${index}; --level: 8%; --glow: 0; --bar-color: ${color}"></span>`
+  return `<span style="--i: ${index}; --level: 8%; --bar-color: ${color}"></span>`
 }).join('')
 const smoothedSignalLevels = Array.from({ length: signalBarCount }, () => 0)
 let activePreset: SoundPreset = 'classic'
 let keyboardOctaveShift = 0
+
+const keyLedPalette = [
+  '0 240 255',
+  '255 90 44',
+  '255 40 160',
+  '120 128 255',
+  '170 255 72',
+  '190 120 255',
+  '24 214 196',
+]
+
+const hashString = (value: string) => {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0
+  }
+  return Math.abs(hash)
+}
+
+const getKeyLedRgb = (label: string) => keyLedPalette[hashString(label) % keyLedPalette.length]
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <main class="shell" id="app-shell">
@@ -45,20 +65,15 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <aside class="header-panel identity-card" aria-hidden="true">
         <p class="panel-label">Engine</p>
         <div class="identity-stack">
-          <span>17 key range</span>
-          <span>Poly voices</span>
-          <span>ADSR filter path</span>
+          <span>Web Audio</span>
+          <span>Polyphonic</span>
+          <span>17-key range</span>
         </div>
       </aside>
 
       <div class="brand-lockup">
-        <p class="eyebrow"><span>Operation VoltAudio</span></p>
         <h1 id="app-title"><span>VoltSynth</span></h1>
-        <div class="brand-meta" aria-hidden="true">
-          <span>Polyphonic</span>
-          <span>Subtractive</span>
-          <span>Web Audio</span>
-        </div>
+        <p class="brand-sub">Web Audio Synth</p>
       </div>
 
       <div class="signal-cluster">
@@ -151,9 +166,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </section>
 
     <div class="keyboard-viewport">
-      <div class="keyboard-header" aria-hidden="true">
-        <span>Piano Keyboard</span>
-        <small>Mouse + computer key input</small>
+      <div class="keyboard-header">
+        <div class="keyboard-header-copy">
+          <span>Keyboard</span>
+          <small>Mouse + computer keys</small>
+        </div>
+        <div class="keyboard-tools">
+          <button class="secondary utility-button" id="mono-toggle" type="button" aria-pressed="false">Poly</button>
+          <div class="mini-stepper" aria-label="Transpose semitones">
+            <button class="step-button mini-step-button" id="transpose-down" type="button">-</button>
+            <span class="mini-step-display" id="transpose-display">0 st</span>
+            <button class="step-button mini-step-button" id="transpose-up" type="button">+</button>
+          </div>
+          <button class="secondary utility-button" id="hold-toggle" type="button" aria-pressed="false">Hold Off</button>
+          <button class="secondary utility-button" id="labels-toggle" type="button" aria-pressed="true">Labels On</button>
+          <button class="secondary utility-button utility-danger" id="panic-button" type="button">Panic</button>
+          <span class="active-notes" id="active-notes-indicator">0 notes</span>
+        </div>
       </div>
       <section class="keyboard" aria-label="VoltSynth keyboard">
         ${notes
@@ -188,12 +217,24 @@ const releaseControl = document.querySelector<HTMLInputElement>('#release-contro
 const toneControl = document.querySelector<HTMLInputElement>('#tone-control')!
 const waveform = document.querySelector<HTMLSelectElement>('#waveform')!
 const outputLevel = document.querySelector<HTMLInputElement>('#output-level')!
+const monoToggle = document.querySelector<HTMLButtonElement>('#mono-toggle')!
+const transposeDownButton = document.querySelector<HTMLButtonElement>('#transpose-down')!
+const transposeUpButton = document.querySelector<HTMLButtonElement>('#transpose-up')!
+const transposeDisplay = document.querySelector<HTMLSpanElement>('#transpose-display')!
+const holdToggle = document.querySelector<HTMLButtonElement>('#hold-toggle')!
+const labelsToggle = document.querySelector<HTMLButtonElement>('#labels-toggle')!
+const panicButton = document.querySelector<HTMLButtonElement>('#panic-button')!
+const activeNotesIndicator = document.querySelector<HTMLSpanElement>('#active-notes-indicator')!
+const keyboardElement = document.querySelector<HTMLElement>('.keyboard')!
 const keyButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-frequency]')]
 const presetButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-preset]')]
 const signalBarElements = [...document.querySelectorAll<HTMLSpanElement>('.signal-bars span')]
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const activeNoteCounts = new Map<string, number>()
+const activeVoiceLabels = new Map<string, string>()
+const sustainedVoices = new Map<string, string>()
 const activeComputerKeys = new Set<string>()
+const activeHeldVoices = new Set<string>()
 const activePointerVoices = new Set<string>()
 const activePointerSessions = new Map<number, PointerSession>()
 let lastSignalFrame = -34
@@ -201,12 +242,47 @@ let lastWaveformValue = waveform.value
 let lastOutputValue = outputLevel.value
 let lastToneValue = toneControl.value
 let lastTailValue = tailControl.value
+let monoMode = false
+let holdEnabled = false
+let labelsVisible = true
+let semitoneShift = 0
 
 const envelopeControls = [attackControl, decayControl, sustainControl, releaseControl]
 
 const setStatus = (label: string, state: 'idle' | 'ready' | 'playing' | 'error') => {
   status.textContent = label
   status.dataset.state = state
+}
+
+const updateActiveNotesIndicator = () => {
+  const count = activeVoiceLabels.size
+  activeNotesIndicator.textContent = `${count} note${count === 1 ? '' : 's'}`
+}
+
+const renderHoldToggle = () => {
+  holdToggle.textContent = holdEnabled ? 'Hold On' : 'Hold Off'
+  holdToggle.setAttribute('aria-pressed', String(holdEnabled))
+  holdToggle.classList.toggle('is-active', holdEnabled)
+}
+
+const renderMonoToggle = () => {
+  monoToggle.textContent = monoMode ? 'Mono' : 'Poly'
+  monoToggle.setAttribute('aria-pressed', String(monoMode))
+  monoToggle.classList.toggle('is-active', monoMode)
+}
+
+const renderLabelsToggle = () => {
+  labelsToggle.textContent = labelsVisible ? 'Labels On' : 'Labels Off'
+  labelsToggle.setAttribute('aria-pressed', String(labelsVisible))
+  labelsToggle.classList.toggle('is-active', labelsVisible)
+  keyboardElement.classList.toggle('labels-hidden', !labelsVisible)
+}
+
+const updateTransposeDisplay = () => {
+  const prefix = semitoneShift > 0 ? '+' : ''
+  transposeDisplay.textContent = `${prefix}${semitoneShift} st`
+  transposeDownButton.disabled = semitoneShift <= -12
+  transposeUpButton.disabled = semitoneShift >= 12
 }
 
 const syncOutputLevel = () => {
@@ -234,12 +310,69 @@ const promptStartAudio = (detail = 'Press Start Audio') => {
   setStatus(detail, 'idle')
 }
 
+const applySemitoneShift = (frequency: number) => frequency * 2 ** (semitoneShift / 12)
+
+const forceStopVoice = (voiceId: string, label?: string) => {
+  const resolvedLabel = label ?? activeVoiceLabels.get(voiceId)
+
+  sustainedVoices.delete(voiceId)
+  activeVoiceLabels.delete(voiceId)
+  activeHeldVoices.delete(voiceId)
+  activePointerVoices.delete(voiceId)
+  engine.stopVoice(voiceId)
+
+  if (resolvedLabel) deactivateNoteVisual(resolvedLabel)
+
+  updateActiveNotesIndicator()
+  setStatus(engine.isReady ? 'Audio ready' : 'Audio idle', engine.isReady ? 'ready' : 'idle')
+}
+
+const stopAllNotes = () => {
+  engine.stopAllVoices()
+  activeVoiceLabels.forEach((label) => deactivateNoteVisual(label))
+  activeVoiceLabels.clear()
+  sustainedVoices.clear()
+  activeHeldVoices.clear()
+  activeNoteCounts.clear()
+  activeComputerKeys.clear()
+  activePointerVoices.clear()
+
+  activePointerSessions.forEach((session, pointerId) => {
+    if (session.button.hasPointerCapture(pointerId)) {
+      session.button.releasePointerCapture(pointerId)
+    }
+  })
+  activePointerSessions.clear()
+
+  keyButtons.forEach((button) => {
+    button.classList.remove('is-playing', 'is-hit')
+    clearKeyLed(button)
+  })
+
+  updateActiveNotesIndicator()
+  setStatus(engine.isReady ? 'All notes stopped' : 'Audio idle', engine.isReady ? 'ready' : 'idle')
+}
+
+const releaseSustainedVoices = () => {
+  ;[...sustainedVoices.entries()].forEach(([voiceId, label]) => {
+    if (activeHeldVoices.has(voiceId)) return
+    forceStopVoice(voiceId, label)
+  })
+}
+
+const stopVoicesForMono = () => {
+  ;[...activeVoiceLabels.entries()].forEach(([voiceId, label]) => {
+    forceStopVoice(voiceId, label)
+  })
+}
+
 const releasePointerSession = (pointerId: number) => {
   const session = activePointerSessions.get(pointerId)
   if (!session) return
 
   activePointerSessions.delete(pointerId)
   activePointerVoices.delete(session.voiceId)
+  activeHeldVoices.delete(session.voiceId)
 
   if (session.button.hasPointerCapture(pointerId)) {
     session.button.releasePointerCapture(pointerId)
@@ -251,6 +384,7 @@ const releasePointerSession = (pointerId: number) => {
 const clearActiveNotes = () => {
   activeComputerKeys.forEach((keyboardKey) => {
     const note = notesByKeyboardKey.get(keyboardKey)
+    activeHeldVoices.delete(getKeyboardVoiceId(keyboardKey))
     if (note) stopNote(note.label, getKeyboardVoiceId(keyboardKey))
   })
   activeComputerKeys.clear()
@@ -294,27 +428,35 @@ const renderSignalDisplay = (timestamp = 0) => {
     const smoothing = targetLevel > previousLevel ? 0.32 : 0.11
     const level = previousLevel + (targetLevel - previousLevel) * smoothing
     const height = Math.round((10 + level * 72) * 10) / 10
-    const glow = Math.round(Math.min(level * 0.78, 0.74) * 100) / 100
-    const glowSize = Math.round((8 + glow * 18) * 10) / 10
-    const opacity = Math.round((0.54 + glow * 0.34) * 100) / 100
+    const opacity = Math.round(Math.min(0.42 + level * 0.9, 0.92) * 100) / 100
 
     smoothedSignalLevels[index] = level
 
     bar.style.setProperty('--level', `${height}%`)
-    bar.style.setProperty('--glow', `${glow}`)
-    bar.style.setProperty('--glow-size', `${glowSize}px`)
     bar.style.setProperty('--bar-opacity', `${opacity}`)
   })
 
   window.requestAnimationFrame(renderSignalDisplay)
 }
 
+const setKeyLed = (button: HTMLButtonElement, label: string) => {
+  button.style.setProperty('--key-led-rgb', getKeyLedRgb(label))
+}
+
+const clearKeyLed = (button: HTMLButtonElement) => {
+  button.style.removeProperty('--key-led-rgb')
+}
+
 const flashKey = (label: string) => {
   const activeKey = keyButtons.find((button) => button.dataset.note === label)
   if (!activeKey) return
 
+  setKeyLed(activeKey, label)
   activeKey.classList.add('is-hit')
-  window.setTimeout(() => activeKey.classList.remove('is-hit'), 240)
+  window.setTimeout(() => {
+    activeKey.classList.remove('is-hit')
+    if (!activeKey.classList.contains('is-playing')) clearKeyLed(activeKey)
+  }, 240)
 }
 
 const updateOctaveDisplay = () => {
@@ -371,8 +513,15 @@ const setPreset = (preset: SoundPreset) => {
 const setKeyActive = (label: string, isActive: boolean) => {
   const activeKey = keyButtons.find((button) => button.dataset.note === label)
 
-  activeKey?.classList.toggle('is-playing', isActive)
-  if (isActive) flashKey(label)
+  if (!activeKey) return
+
+  activeKey.classList.toggle('is-playing', isActive)
+  if (isActive) {
+    setKeyLed(activeKey, label)
+    flashKey(label)
+  } else {
+    clearKeyLed(activeKey)
+  }
 }
 
 const activateNoteVisual = (label: string) => {
@@ -401,6 +550,22 @@ const startNote = async (frequency: number, label: string, voiceId: string) => {
       return false
     }
 
+    if (sustainedVoices.has(voiceId)) {
+      forceStopVoice(voiceId, label)
+      return true
+    }
+
+    if (monoMode && activeVoiceLabels.size > 0) {
+      stopVoicesForMono()
+    }
+
+    const previousLabel = activeVoiceLabels.get(voiceId)
+    if (previousLabel) {
+      sustainedVoices.delete(voiceId)
+      activeVoiceLabels.delete(voiceId)
+      deactivateNoteVisual(previousLabel)
+    }
+
     engine.startVoice({
       frequency,
       preset: activePreset,
@@ -408,7 +573,10 @@ const startNote = async (frequency: number, label: string, voiceId: string) => {
       waveform: waveform.value as OscillatorType,
     })
 
+    activeVoiceLabels.set(voiceId, label)
+    sustainedVoices.delete(voiceId)
     activateNoteVisual(label)
+    updateActiveNotesIndicator()
     setStatus(`${label} playing`, 'playing')
     return true
   } catch (error) {
@@ -417,10 +585,16 @@ const startNote = async (frequency: number, label: string, voiceId: string) => {
   }
 }
 
-const stopNote = (label: string, voiceId: string) => {
-  engine.stopVoice(voiceId)
-  deactivateNoteVisual(label)
-  setStatus(engine.isReady ? 'Audio ready' : 'Audio idle', engine.isReady ? 'ready' : 'idle')
+const stopNote = (label: string, voiceId: string, options?: { force?: boolean }) => {
+  if (!activeVoiceLabels.has(voiceId)) return
+
+  if (holdEnabled && !options?.force && !voiceId.startsWith('preview-')) {
+    sustainedVoices.set(voiceId, label)
+    setStatus(`${label} held`, 'playing')
+    return
+  }
+
+  forceStopVoice(voiceId, label)
 }
 
 const playPreviewNote = async (frequency: number, label: string) => {
@@ -430,17 +604,14 @@ const playPreviewNote = async (frequency: number, label: string) => {
       return false
     }
 
-    engine.playNote({
-      duration: 0.68,
-      frequency,
-      preset: activePreset,
-      waveform: waveform.value as OscillatorType,
-    })
+    const voiceId = `preview-${label}`
+    const started = await startNote(frequency, label, voiceId)
 
-    flashKey(label)
+    if (!started) return false
+
     setStatus(`${label} preview`, 'playing')
     window.setTimeout(() => {
-      setStatus(engine.isReady ? 'Audio ready' : 'Audio idle', engine.isReady ? 'ready' : 'idle')
+      stopNote(label, voiceId, { force: true })
     }, 560)
     return true
   } catch (error) {
@@ -454,7 +625,48 @@ startButton.addEventListener('click', () => {
 })
 
 playButton.addEventListener('click', () => {
-  void runAction(() => playPreviewNote(261.63, 'C4'), playButton)
+  void runAction(() => playPreviewNote(applySemitoneShift(261.63), 'C4'), playButton)
+})
+
+monoToggle.addEventListener('click', () => {
+  monoMode = !monoMode
+  renderMonoToggle()
+  if (monoMode && activeVoiceLabels.size > 1) {
+    stopVoicesForMono()
+  }
+  setStatus(monoMode ? 'Mono mode' : 'Poly mode', 'ready')
+})
+
+transposeDownButton.addEventListener('click', () => {
+  const nextShift = Math.max(-12, semitoneShift - 1)
+  if (nextShift === semitoneShift) return
+  semitoneShift = nextShift
+  updateTransposeDisplay()
+  setStatus(`Transpose ${semitoneShift > 0 ? '+' : ''}${semitoneShift} st`, 'ready')
+})
+
+transposeUpButton.addEventListener('click', () => {
+  const nextShift = Math.min(12, semitoneShift + 1)
+  if (nextShift === semitoneShift) return
+  semitoneShift = nextShift
+  updateTransposeDisplay()
+  setStatus(`Transpose ${semitoneShift > 0 ? '+' : ''}${semitoneShift} st`, 'ready')
+})
+
+holdToggle.addEventListener('click', () => {
+  holdEnabled = !holdEnabled
+  renderHoldToggle()
+  if (!holdEnabled) releaseSustainedVoices()
+  setStatus(holdEnabled ? 'Hold enabled' : 'Hold released', 'ready')
+})
+
+labelsToggle.addEventListener('click', () => {
+  labelsVisible = !labelsVisible
+  renderLabelsToggle()
+})
+
+panicButton.addEventListener('click', () => {
+  stopAllNotes()
 })
 
 outputLevel.addEventListener('input', syncOutputLevel)
@@ -539,7 +751,7 @@ presetButtons.forEach((button) => {
       async () => {
         const preset = button.dataset.preset as SoundPreset
         const changed = setPreset(preset)
-        const previewed = await playPreviewNote(329.63, 'E4')
+        const previewed = await playPreviewNote(applySemitoneShift(329.63), 'E4')
 
         return changed || previewed
       },
@@ -552,13 +764,14 @@ keyButtons.forEach((button) => {
   button.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return
 
-    const frequency = Number(button.dataset.frequency)
+    const frequency = applySemitoneShift(Number(button.dataset.frequency))
     const label = button.dataset.note ?? 'Note'
     const voiceId = getPointerVoiceId(label)
 
     if (button.disabled || activePointerVoices.has(voiceId)) return
 
     activePointerVoices.add(voiceId)
+    activeHeldVoices.add(voiceId)
     activePointerSessions.set(event.pointerId, {
       button,
       label,
@@ -596,12 +809,16 @@ window.addEventListener('keydown', (event) => {
 
   event.preventDefault()
   activeComputerKeys.add(keyboardKey)
+  activeHeldVoices.add(getKeyboardVoiceId(keyboardKey))
   void startNote(
-    transposeFrequency(note.frequency, keyboardOctaveShift),
+    applySemitoneShift(transposeFrequency(note.frequency, keyboardOctaveShift)),
     note.label,
     getKeyboardVoiceId(keyboardKey),
   ).then((didStart) => {
-    if (!didStart) activeComputerKeys.delete(keyboardKey)
+    if (!didStart) {
+      activeComputerKeys.delete(keyboardKey)
+      activeHeldVoices.delete(getKeyboardVoiceId(keyboardKey))
+    }
   })
 })
 
@@ -613,6 +830,7 @@ window.addEventListener('keyup', (event) => {
 
   event.preventDefault()
   activeComputerKeys.delete(keyboardKey)
+  activeHeldVoices.delete(getKeyboardVoiceId(keyboardKey))
   stopNote(note.label, getKeyboardVoiceId(keyboardKey))
 })
 
@@ -632,6 +850,11 @@ const stageLandingSequence = () => {
 }
 
 updateOctaveDisplay()
+updateActiveNotesIndicator()
+renderMonoToggle()
+renderHoldToggle()
+renderLabelsToggle()
+updateTransposeDisplay()
 syncToneControl()
 syncTailControl()
 syncEnvelopeControls()
