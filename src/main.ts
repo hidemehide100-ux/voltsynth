@@ -22,25 +22,11 @@ const soundPresets: Array<{ label: string; preset: SoundPreset }> = [
 ]
 
 const signalBarCount = 24
-const signalColors = ['#72d8cf', '#94b8f2', '#d7c56f', '#df8d79', '#b5a4ef']
-type VisualEffectKind = 'lightning' | 'wind' | 'fire' | 'water'
-type EffectChannel = 'transport' | 'preset' | 'performance' | 'keyboard' | 'modulation'
-type EffectOrigin = {
-  clientX: number
-  clientY: number
-}
+const signalColors = ['#00a896', '#00a896', '#00a896', '#ff5722', '#ff4500', '#d32f2f']
 type PointerSession = {
   button: HTMLButtonElement
   label: string
   voiceId: string
-}
-
-const effectProfiles: Record<EffectChannel, { probability: number; kinds: VisualEffectKind[] }> = {
-  transport: { probability: 0.58, kinds: ['lightning', 'fire', 'wind'] },
-  preset: { probability: 0.32, kinds: ['lightning', 'water', 'wind'] },
-  performance: { probability: 0.36, kinds: ['wind', 'water', 'lightning'] },
-  keyboard: { probability: 0.14, kinds: ['water', 'fire', 'wind', 'lightning'] },
-  modulation: { probability: 0.24, kinds: ['water', 'wind', 'fire'] },
 }
 
 const signalBars = Array.from({ length: signalBarCount }, (_, index) => {
@@ -55,15 +41,13 @@ let keyboardOctaveShift = 0
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <main class="shell" id="app-shell">
   <section class="synth" aria-labelledby="app-title">
-    <div class="effect-layer" id="interaction-effects" aria-hidden="true"></div>
-
     <header class="synth-header">
       <aside class="header-panel identity-card" aria-hidden="true">
-        <p class="panel-label">Build Notes</p>
+        <p class="panel-label">Engine</p>
         <div class="identity-stack">
-          <span>17 playable keys</span>
-          <span>9 sound presets</span>
-          <span>ADSR + filter engine</span>
+          <span>17 key range</span>
+          <span>Poly voices</span>
+          <span>ADSR filter path</span>
         </div>
       </aside>
 
@@ -71,9 +55,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <p class="eyebrow"><span>Operation VoltAudio</span></p>
         <h1 id="app-title"><span>VoltSynth</span></h1>
         <div class="brand-meta" aria-hidden="true">
-          <span>Browser Synth</span>
-          <span>Web Audio API</span>
-          <span>Manual build</span>
+          <span>Polyphonic</span>
+          <span>Subtractive</span>
+          <span>Web Audio</span>
         </div>
       </div>
 
@@ -88,11 +72,15 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <div class="control-grid">
       <section class="module transport module-live" aria-label="Audio transport">
-        <button class="primary" id="start-audio" type="button">Start Audio</button>
-        <button class="secondary" id="play-note" type="button" disabled>Preview Note</button>
+        <span class="module-title">Transport</span>
+        <div class="transport-actions">
+          <button class="primary" id="start-audio" type="button">Start Audio</button>
+          <button class="secondary" id="play-note" type="button" disabled>Preview Note</button>
+        </div>
       </section>
 
       <section class="module oscillator" aria-label="Oscillator controls">
+        <span class="module-title">Oscillator</span>
         <label for="waveform">Waveform</label>
         <select id="waveform">
           <option value="sawtooth">Saw</option>
@@ -103,6 +91,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </section>
 
       <section class="module output" aria-label="Output controls">
+        <span class="module-title">Master</span>
         <label for="output-level">Output</label>
         <input id="output-level" type="range" min="0" max="0.5" step="0.01" value="0.18" />
       </section>
@@ -131,27 +120,41 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div>
 
       <div class="performance-panel tone-panel">
-        <label for="tone-control">Tone</label>
+        <label for="tone-control">Filter Tone</label>
         <input id="tone-control" type="range" min="0.6" max="1.6" step="0.01" value="1" />
       </div>
 
       <div class="performance-panel tail-panel">
-        <label for="tail-control">Tail</label>
+        <label for="tail-control">Release Tail</label>
         <input id="tail-control" type="range" min="0.5" max="1.8" step="0.01" value="1" />
+      </div>
+
+      <div class="performance-panel adsr-panel">
+        <label for="attack-control">Attack</label>
+        <input id="attack-control" type="range" min="0.005" max="0.4" step="0.005" value="0.022" />
+      </div>
+
+      <div class="performance-panel adsr-panel">
+        <label for="decay-control">Decay</label>
+        <input id="decay-control" type="range" min="0.01" max="0.8" step="0.01" value="0.16" />
+      </div>
+
+      <div class="performance-panel adsr-panel">
+        <label for="sustain-control">Sustain</label>
+        <input id="sustain-control" type="range" min="0.05" max="1" step="0.01" value="0.68" />
+      </div>
+
+      <div class="performance-panel adsr-panel">
+        <label for="release-control">Release</label>
+        <input id="release-control" type="range" min="0.03" max="1.8" step="0.01" value="0.42" />
       </div>
     </section>
 
-    <div class="drip-rail" aria-hidden="true">
-      <span></span>
-      <span></span>
-      <span></span>
-      <span></span>
-      <span></span>
-      <span></span>
-      <span></span>
-    </div>
-
     <div class="keyboard-viewport">
+      <div class="keyboard-header" aria-hidden="true">
+        <span>Piano Keyboard</span>
+        <small>Mouse + computer key input</small>
+      </div>
       <section class="keyboard" aria-label="VoltSynth keyboard">
         ${notes
           .map(
@@ -178,14 +181,16 @@ const octaveDownButton = document.querySelector<HTMLButtonElement>('#octave-down
 const octaveUpButton = document.querySelector<HTMLButtonElement>('#octave-up')!
 const octaveDisplay = document.querySelector<HTMLSpanElement>('#octave-display')!
 const tailControl = document.querySelector<HTMLInputElement>('#tail-control')!
+const attackControl = document.querySelector<HTMLInputElement>('#attack-control')!
+const decayControl = document.querySelector<HTMLInputElement>('#decay-control')!
+const sustainControl = document.querySelector<HTMLInputElement>('#sustain-control')!
+const releaseControl = document.querySelector<HTMLInputElement>('#release-control')!
 const toneControl = document.querySelector<HTMLInputElement>('#tone-control')!
 const waveform = document.querySelector<HTMLSelectElement>('#waveform')!
 const outputLevel = document.querySelector<HTMLInputElement>('#output-level')!
 const keyButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-frequency]')]
 const presetButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-preset]')]
 const signalBarElements = [...document.querySelectorAll<HTMLSpanElement>('.signal-bars span')]
-const effectLayer = document.querySelector<HTMLDivElement>('#interaction-effects')!
-const synthPanel = document.querySelector<HTMLElement>('.synth')!
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const activeNoteCounts = new Map<string, number>()
 const activeComputerKeys = new Set<string>()
@@ -196,6 +201,8 @@ let lastWaveformValue = waveform.value
 let lastOutputValue = outputLevel.value
 let lastToneValue = toneControl.value
 let lastTailValue = tailControl.value
+
+const envelopeControls = [attackControl, decayControl, sustainControl, releaseControl]
 
 const setStatus = (label: string, state: 'idle' | 'ready' | 'playing' | 'error') => {
   status.textContent = label
@@ -212,6 +219,15 @@ const syncToneControl = () => {
 
 const syncTailControl = () => {
   engine.setReleaseScale(Number(tailControl.value))
+}
+
+const syncEnvelopeControls = () => {
+  engine.setEnvelopeControl({
+    attack: Number(attackControl.value),
+    decay: Number(decayControl.value),
+    sustain: Number(sustainControl.value),
+    release: Number(releaseControl.value),
+  })
 }
 
 const promptStartAudio = (detail = 'Press Start Audio') => {
@@ -244,186 +260,11 @@ const clearActiveNotes = () => {
   })
 }
 
-const getEffectOrigin = (anchor: HTMLElement, event?: Event): EffectOrigin => {
-  if (event instanceof MouseEvent && (event.clientX !== 0 || event.clientY !== 0)) {
-    return {
-      clientX: event.clientX,
-      clientY: event.clientY,
-    }
-  }
-
-  const rect = anchor.getBoundingClientRect()
-
-  return {
-    clientX: rect.left + rect.width / 2,
-    clientY: rect.top + rect.height / 2,
-  }
-}
-
-const appendTimedEffect = (effect: HTMLElement | SVGSVGElement, duration: number) => {
-  effectLayer.append(effect)
-  window.setTimeout(() => effect.remove(), duration)
-}
-
-const createLightningPolyline = (width: number, height: number, startX: number) => {
-  let x = startX
-  let y = 6
-  const points = [`${x},${y}`]
-
-  while (y < height - 18) {
-    x += (Math.random() - 0.5) * 20
-    y += 18 + Math.random() * 26
-    points.push(`${Math.max(8, Math.min(width - 8, x))},${Math.min(height - 8, y)}`)
-  }
-
-  return points.join(' ')
-}
-
-const emitLightning = (clientX: number, clientY: number) => {
-  const rect = synthPanel.getBoundingClientRect()
-  const x = clientX - rect.left
-  const y = clientY - rect.top
-  const width = 132
-  const height = 240
-  const left = Math.max(0, Math.min(rect.width - width, x - width / 2))
-  const top = Math.max(0, Math.min(rect.height - height, y - height * 0.34))
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  const hue = ['var(--electric)', 'var(--sky)', 'var(--violet)'][Math.floor(Math.random() * 3)]
-
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
-  svg.setAttribute('class', 'lightning-strike')
-  svg.style.left = `${left}px`
-  svg.style.top = `${top}px`
-  svg.style.setProperty('--bolt-color', hue)
-  svg.innerHTML = `
-    <polyline class="bolt branch" points="${createLightningPolyline(width, height * 0.72, width * 0.34)}" />
-    <polyline class="bolt main" points="${createLightningPolyline(width, height, width * 0.54)}" />
-    <polyline class="bolt branch" points="${createLightningPolyline(width, height * 0.78, width * 0.72)}" />
-  `
-
-  appendTimedEffect(svg, 520)
-}
-
-const emitWind = (clientX: number, clientY: number) => {
-  const rect = synthPanel.getBoundingClientRect()
-  const x = clientX - rect.left
-  const y = clientY - rect.top
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  const hue = ['var(--sky)', 'var(--electric)', 'var(--paper)'][Math.floor(Math.random() * 3)]
-
-  svg.setAttribute('viewBox', '0 0 192 108')
-  svg.setAttribute('class', 'effect-wind')
-  svg.style.left = `${Math.max(18, Math.min(rect.width - 174, x - 86))}px`
-  svg.style.top = `${Math.max(18, Math.min(rect.height - 98, y - 52))}px`
-  svg.style.setProperty('--wind-color', hue)
-  svg.innerHTML = `
-    <path class="wind-line line-a" d="M 10 62 C 38 38, 68 34, 98 44 S 146 76, 182 42" />
-    <path class="wind-line line-b" d="M 22 52 C 58 22, 92 22, 120 36 S 158 58, 176 32" />
-    <path class="wind-line line-c" d="M 18 80 C 54 60, 84 62, 120 72 S 154 92, 182 68" />
-  `
-
-  appendTimedEffect(svg, 760)
-}
-
-const emitFire = (clientX: number, clientY: number) => {
-  const rect = synthPanel.getBoundingClientRect()
-  const x = clientX - rect.left
-  const y = clientY - rect.top
-  const effect = document.createElement('div')
-
-  effect.className = 'effect-fire'
-  effect.style.left = `${x}px`
-  effect.style.top = `${y}px`
-  effect.innerHTML = `
-    <span class="flame flame-a"></span>
-    <span class="flame flame-b"></span>
-    <span class="flame flame-c"></span>
-    <span class="spark spark-a"></span>
-    <span class="spark spark-b"></span>
-    <span class="spark spark-c"></span>
-  `
-
-  appendTimedEffect(effect, 820)
-}
-
-const emitWater = (clientX: number, clientY: number) => {
-  const rect = synthPanel.getBoundingClientRect()
-  const x = clientX - rect.left
-  const y = clientY - rect.top
-  const effect = document.createElement('div')
-
-  effect.className = 'effect-water'
-  effect.style.left = `${x}px`
-  effect.style.top = `${y}px`
-  effect.innerHTML = `
-    <span class="ring ring-a"></span>
-    <span class="ring ring-b"></span>
-    <span class="drop drop-a"></span>
-    <span class="drop drop-b"></span>
-    <span class="drop drop-c"></span>
-  `
-
-  appendTimedEffect(effect, 920)
-}
-
-const emitEffect = (kind: VisualEffectKind, origin: EffectOrigin) => {
-  switch (kind) {
-    case 'wind':
-      emitWind(origin.clientX, origin.clientY)
-      break
-    case 'fire':
-      emitFire(origin.clientX, origin.clientY)
-      break
-    case 'water':
-      emitWater(origin.clientX, origin.clientY)
-      break
-    default:
-      emitLightning(origin.clientX, origin.clientY)
-      break
-  }
-}
-
-const maybeEmitInteractionEffect = (
-  anchor: HTMLElement,
-  channel: EffectChannel,
-  event?: Event,
-  overrides?: Partial<{ kinds: VisualEffectKind[]; probability: number }>,
-) => {
-  if (prefersReducedMotion.matches) return
-
-  const profile = effectProfiles[channel]
-  const probability = overrides?.probability ?? profile.probability
-
-  if (Math.random() > probability) return
-
-  const kinds = overrides?.kinds ?? profile.kinds
-  const kind = kinds[Math.floor(Math.random() * kinds.length)]
-
-  emitEffect(kind, getEffectOrigin(anchor, event))
-}
-
-const runEffectfulAction = async ({
-  action,
-  anchor,
-  channel,
-  effect,
-  event,
-}: {
-  action: () => boolean | Promise<boolean>
-  anchor: HTMLElement
-  channel: EffectChannel
-  effect?: Partial<{ kinds: VisualEffectKind[]; probability: number }>
-  event?: Event
-}) => {
+const runAction = async (action: () => boolean | Promise<boolean>, anchor?: HTMLElement) => {
   if (anchor instanceof HTMLButtonElement && anchor.disabled) return false
 
   try {
-    const applied = await action()
-
-    if (!applied) return false
-
-    maybeEmitInteractionEffect(anchor, channel, event, effect)
-    return true
+    return await action()
   } catch (error) {
     handleAudioError(error)
     return false
@@ -490,6 +331,7 @@ const enableInstrument = async () => {
   syncOutputLevel()
   syncToneControl()
   syncTailControl()
+  syncEnvelopeControls()
 
   startButton.textContent = 'Audio Ready'
   startButton.disabled = true
@@ -501,6 +343,9 @@ const enableInstrument = async () => {
   octaveUpButton.disabled = false
   toneControl.disabled = false
   tailControl.disabled = false
+  envelopeControls.forEach((control) => {
+    control.disabled = false
+  })
   keyButtons.forEach((button) => {
     button.disabled = false
   })
@@ -604,78 +449,60 @@ const playPreviewNote = async (frequency: number, label: string) => {
   }
 }
 
-startButton.addEventListener('click', (event) => {
-  void runEffectfulAction({
-    action: enableInstrument,
-    anchor: startButton,
-    channel: 'transport',
-    effect: { kinds: ['lightning', 'fire', 'wind'], probability: 0.58 },
-    event,
-  })
+startButton.addEventListener('click', () => {
+  void runAction(enableInstrument, startButton)
 })
 
-playButton.addEventListener('click', (event) => {
-  void runEffectfulAction({
-    action: () => playPreviewNote(261.63, 'C4'),
-    anchor: playButton,
-    channel: 'transport',
-    effect: { kinds: ['fire', 'lightning', 'wind'], probability: 0.42 },
-    event,
-  })
+playButton.addEventListener('click', () => {
+  void runAction(() => playPreviewNote(261.63, 'C4'), playButton)
 })
 
 outputLevel.addEventListener('input', syncOutputLevel)
-outputLevel.addEventListener('change', (event) => {
+outputLevel.addEventListener('change', () => {
   if (outputLevel.value === lastOutputValue) return
 
   lastOutputValue = outputLevel.value
   setStatus(`Output ${Math.round((Number(outputLevel.value) / 0.5) * 100)}%`, engine.isReady ? 'ready' : 'idle')
-  maybeEmitInteractionEffect(outputLevel, 'modulation', event, {
-    kinds: ['water', 'wind'],
-    probability: 0.18,
-  })
 })
 
 toneControl.addEventListener('input', syncToneControl)
-toneControl.addEventListener('change', (event) => {
+toneControl.addEventListener('change', () => {
   if (toneControl.value === lastToneValue) return
 
   lastToneValue = toneControl.value
   setStatus(`Tone ${Number(toneControl.value).toFixed(2)}x`, engine.isReady ? 'ready' : 'idle')
-  maybeEmitInteractionEffect(toneControl, 'modulation', event, {
-    kinds: ['wind', 'fire'],
-    probability: 0.22,
-  })
 })
 
 tailControl.addEventListener('input', syncTailControl)
-tailControl.addEventListener('change', (event) => {
+tailControl.addEventListener('change', () => {
   if (tailControl.value === lastTailValue) return
 
   lastTailValue = tailControl.value
   setStatus(`Tail ${Number(tailControl.value).toFixed(2)}x`, engine.isReady ? 'ready' : 'idle')
-  maybeEmitInteractionEffect(tailControl, 'modulation', event, {
-    kinds: ['water', 'wind', 'fire'],
-    probability: 0.24,
+})
+
+envelopeControls.forEach((control) => {
+  control.addEventListener('input', syncEnvelopeControls)
+
+  control.addEventListener('change', () => {
+    const label = control.previousElementSibling?.textContent ?? 'Envelope'
+
+    setStatus(`${label} ${Number(control.value).toFixed(2)}`, engine.isReady ? 'ready' : 'idle')
   })
 })
 
-waveform.addEventListener('change', (event) => {
+waveform.addEventListener('change', () => {
   if (waveform.value === lastWaveformValue) return
 
   lastWaveformValue = waveform.value
   const label = waveform.selectedOptions[0]?.textContent ?? waveform.value
 
   setStatus(`${label} waveform`, engine.isReady ? 'ready' : 'idle')
-  maybeEmitInteractionEffect(waveform, 'modulation', event, {
-    kinds: ['wind', 'water'],
-    probability: 0.26,
-  })
 })
 
-octaveDownButton.addEventListener('click', (event) => {
-  void runEffectfulAction({
-    action: () => {
+octaveDownButton.addEventListener('click', () => {
+  void runAction(
+    () => {
       const nextShift = Math.max(-1, keyboardOctaveShift - 1)
 
       if (nextShift === keyboardOctaveShift) return false
@@ -685,16 +512,13 @@ octaveDownButton.addEventListener('click', (event) => {
       setStatus(`Keyboard ${keyboardOctaveShift > 0 ? '+' : ''}${keyboardOctaveShift} oct`, 'ready')
       return true
     },
-    anchor: octaveDownButton,
-    channel: 'performance',
-    effect: { kinds: ['wind', 'water', 'lightning'], probability: 0.36 },
-    event,
-  })
+    octaveDownButton,
+  )
 })
 
-octaveUpButton.addEventListener('click', (event) => {
-  void runEffectfulAction({
-    action: () => {
+octaveUpButton.addEventListener('click', () => {
+  void runAction(
+    () => {
       const nextShift = Math.min(1, keyboardOctaveShift + 1)
 
       if (nextShift === keyboardOctaveShift) return false
@@ -704,29 +528,23 @@ octaveUpButton.addEventListener('click', (event) => {
       setStatus(`Keyboard ${keyboardOctaveShift > 0 ? '+' : ''}${keyboardOctaveShift} oct`, 'ready')
       return true
     },
-    anchor: octaveUpButton,
-    channel: 'performance',
-    effect: { kinds: ['wind', 'water', 'lightning'], probability: 0.36 },
-    event,
-  })
+    octaveUpButton,
+  )
 })
 
 presetButtons.forEach((button) => {
   button.disabled = false
-  button.addEventListener('click', (event) => {
-    void runEffectfulAction({
-      action: async () => {
+  button.addEventListener('click', () => {
+    void runAction(
+      async () => {
         const preset = button.dataset.preset as SoundPreset
         const changed = setPreset(preset)
         const previewed = await playPreviewNote(329.63, 'E4')
 
         return changed || previewed
       },
-      anchor: button,
-      channel: 'preset',
-      effect: { kinds: ['lightning', 'water', 'wind'], probability: 0.28 },
-      event,
-    })
+      button,
+    )
   })
 })
 
@@ -750,14 +568,6 @@ keyButtons.forEach((button) => {
     void startNote(frequency, label, voiceId).then((didStart) => {
       if (!didStart) {
         releasePointerSession(event.pointerId)
-        return
-      }
-
-      if (didStart) {
-        maybeEmitInteractionEffect(button, 'keyboard', event, {
-          kinds: ['water', 'fire', 'wind', 'lightning'],
-          probability: 0.12,
-        })
       }
     })
   })
@@ -790,11 +600,9 @@ window.addEventListener('keydown', (event) => {
     transposeFrequency(note.frequency, keyboardOctaveShift),
     note.label,
     getKeyboardVoiceId(keyboardKey),
-  ).then(
-    (didStart) => {
-      if (!didStart) activeComputerKeys.delete(keyboardKey)
-    },
-  )
+  ).then((didStart) => {
+    if (!didStart) activeComputerKeys.delete(keyboardKey)
+  })
 })
 
 window.addEventListener('keyup', (event) => {
@@ -819,12 +627,13 @@ document.addEventListener('visibilitychange', () => {
 const stageLandingSequence = () => {
   window.requestAnimationFrame(() => {
     shell.classList.add('is-loaded')
-    window.setTimeout(() => shell.classList.add('is-built'), prefersReducedMotion.matches ? 0 : 760)
+    window.setTimeout(() => shell.classList.add('is-built'), prefersReducedMotion.matches ? 0 : 180)
   })
 }
 
 updateOctaveDisplay()
 syncToneControl()
 syncTailControl()
+syncEnvelopeControls()
 stageLandingSequence()
 window.requestAnimationFrame(renderSignalDisplay)

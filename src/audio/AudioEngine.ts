@@ -1,7 +1,7 @@
-import { presets, type SoundPreset } from './presets'
+import { presets, type EnvelopeShape, type SoundPreset } from './presets'
 import { Voice } from './Voice'
 
-export type { SoundPreset } from './presets'
+export type { EnvelopeShape, SoundPreset } from './presets'
 
 export type PlayNoteOptions = {
   frequency: number
@@ -21,6 +21,7 @@ export class AudioEngine {
   private context: AudioContext | null = null
   private frequencyData: Uint8Array | null = null
   private masterGain: GainNode | null = null
+  private envelopeOverride: Partial<EnvelopeShape> = {}
   private masterLevel = 0.18
   private releaseScale = 1
   private tone = 1
@@ -79,6 +80,13 @@ export class AudioEngine {
     this.releaseScale = clamp(scale, 0.45, 2.2)
   }
 
+  setEnvelopeControl(partialEnvelope: Partial<EnvelopeShape>) {
+    this.envelopeOverride = {
+      ...this.envelopeOverride,
+      ...partialEnvelope,
+    }
+  }
+
   setTone(amount: number) {
     this.tone = clamp(amount, 0.5, 1.8)
 
@@ -112,6 +120,7 @@ export class AudioEngine {
         startBin + 1,
         Math.ceil((highFrequency / nyquist) * frequencyData.length),
       )
+
       let total = 0
       let peak = 0
 
@@ -142,8 +151,17 @@ export class AudioEngine {
 
     this.stopVoice(voiceId)
 
+    const presetConfig = presets[preset]
+    const voiceConfig = {
+      ...presetConfig,
+      envelope: {
+        ...presetConfig.envelope,
+        ...this.envelopeOverride,
+      },
+    }
+
     const voice = new Voice({
-      config: presets[preset],
+      config: voiceConfig,
       context: this.context,
       destination: this.masterGain,
       frequency,
