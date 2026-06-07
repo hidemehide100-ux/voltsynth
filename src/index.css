@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .brushed-metal {
+    background-image: 
+      repeating-linear-gradient(
+        45deg,
+        hsla(0,0%,100%,.02),
+        hsla(0,0%,100%,.02) 1px,
+        transparent 1px,
+        transparent 2px,
+        hsla(0,0%,0%,.02) 2px,
+        hsla(0,0%,0%,.02) 3px,
+        transparent 3px,
+        transparent 4px
+      ),
+      linear-gradient(
+        to bottom,
+        #1c1c1c 0%,
+        #111111 20%,
+        #0d0d0d 100%
+      );
+  }
+}
